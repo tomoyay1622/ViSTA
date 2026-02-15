@@ -1,4 +1,4 @@
-# ViSTA (VIsualization of Solving Trace for ASP)
+# ViSTA (Visualization of Solving Trace for ASP)
 ASPプログラムの実行トレースと、その可視化を目的としたツール群
 
 ## 使い方
@@ -18,6 +18,6 @@ $ python3 cdnl-tracer.py example/test.con > example/test.json
 ```
 
 - 求解トレースをビジュアライザで表示する。
-```
+
 [このツール](https://tomoyay1622.github.io/ViSTA/)にexample/test.jsonの内容を入力する
-```
+
