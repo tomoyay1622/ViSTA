@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CDNL-ASP Visualizer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        .vis-network { height: 100%; width: 100%; border: 1px solid #e5e7eb; background: #ffffff; outline: none; }
+        .log-entry { font-family: monospace; font-size: 0.8em; border-bottom: 1px solid #f3f4f6; padding: 2px 4px; white-space: pre-wrap; word-break: break-all; }
+        .log-entry:hover { background-color: #f9fafb; }
+        .log-decide { color: #2563eb; font-weight: bold; } 
+        .log-propagate { color: #16a34a; } 
+        .log-conflict { color: #dc2626; font-weight: bold; background-color: #fef2f2; } 
+        .log-backjump { color: #d97706; font-weight: bold; } 
+        .log-loop_nogood { color: #9333ea; font-weight: bold; } 
+        .log-learned { color: #db2777; font-weight: bold; }
+        .log-analyze { color: #be185d; font-weight: bold; background-color: #fff1f2; }
+        .log-us_detail { color: #7e22ce; font-size: 0.75em; }
+        
+        .tab-active { border-bottom: 2px solid #2563eb; color: #2563eb; font-weight: bold; }
+        .tab-inactive { color: #6b7280; }
+        .tab-inactive:hover { color: #374151; }
+        
+        /* Custom scrollbar */
+        .log-container::-webkit-scrollbar { width: 8px; }
+        .log-container::-webkit-scrollbar-track { background: #f1f1f1; }
+        .log-container::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900 h-screen flex flex-col overflow-hidden">
+    <div id="app" class="flex flex-col h-full">
+        <!-- Header -->
+        <header class="bg-white border-b px-6 py-3 flex justify-between items-center shadow-sm z-10">
+            <h1 class="text-xl font-bold text-gray-800 flex items-center gap-2">
+                <span class="bg-blue-600 text-white p-1 rounded text-xs">ASP</span>
+                Solver Trace Visualizer
+            </h1>
+            <div class="text-xs text-gray-500 text-right font-mono" v-if="traceLoaded">
+                <div>{{ stats.status }}</div>
+                <div>Conflicts: {{ stats.conflicts }} | CyclicAtoms: {{ stats.cyclic_atoms_count }}</div>
+            </div>
+        </header>
+
+        <!-- Initial Load Screen -->
+        <div v-if="!traceLoaded" class="flex-1 flex items-center justify-center p-4">
+            <div class="bg-white p-8 rounded-lg shadow-lg w-full max-w-2xl">
+                <h2 class="text-xl font-semibold mb-4 text-gray-700">Load Execution Trace</h2>
+                <p class="text-sm text-gray-500 mb-2">Paste JSON output:</p>
+                <textarea v-model="jsonInput" class="w-full h-64 p-3 border rounded-md font-mono text-xs bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none" placeholder='{"symbols": {...}, "events": [...]}'></textarea>
+                <div class="mt-3 flex items-center gap-2">
+                    <input type="checkbox" id="enableImplGraphInit" v-model="enableImplicationGraph" class="w-4 h-4 text-blue-600">
+                    <label for="enableImplGraphInit" class="text-sm text-gray-700 cursor-pointer select-none">
+                        Enable Implication Graph (disable if performance is slow)
+                    </label>
+                </div>
+                <div class="mt-4 flex justify-between items-center">
+                    <p v-if="error" class="text-red-500 text-sm font-bold">{{ error }}</p>
+                    <button @click="loadTrace" class="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition font-medium ml-auto">
+                        Visualize
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Workspace -->
+        <div v-else class="flex flex-1 overflow-hidden">
+            
+            <!-- Left Sidebar: Controls & Log -->
+            <div class="w-80 bg-white border-r flex flex-col z-10 shadow-lg shrink-0">
+                <!-- Playback Controls -->
+                <div class="p-4 border-b bg-gray-50">
+                    <div class="flex justify-center items-center gap-1 mb-3">
+                        <button @click="jumpPrevKey" class="p-2 rounded hover:bg-gray-200 text-gray-600" title="Previous Decision/Conflict">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 19l-7-7 7-7m8 14l-7-7 7-7"></path></svg>
+                        </button>
+                        <button @click="prev" class="p-2 rounded hover:bg-gray-200 text-gray-600" title="Previous Step">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"></path></svg>
+                        </button>
+                        
+                        <div class="flex-1 mx-2 text-center">
+                            <div class="text-2xl font-mono font-bold text-blue-600">{{ currentStep }}</div>
+                            <div class="text-xs text-gray-400">OF {{ totalSteps }} STEPS</div>
+                        </div>
+
+                        <button @click="next" class="p-2 rounded hover:bg-gray-200 text-gray-600" title="Next Step">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>
+                        </button>
+                        <button @click="jumpNextKey" class="p-2 rounded hover:bg-gray-200 text-gray-600" title="Next Decision/Conflict">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"></path></svg>
+                        </button>
+                    </div>
+                    
+                    <div class="w-full bg-gray-200 rounded-full h-1.5 mt-2">
+                        <div class="bg-blue-600 h-1.5 rounded-full transition-all duration-100" :style="{ width: progressPercent + '%' }"></div>
+                    </div>
+                </div>
+
+                <!-- Event Log -->
+                <div class="flex-1 overflow-y-auto p-2 log-container bg-white" ref="logContainer">
+                    <div v-for="(log, index) in logs" :key="index" 
+                         :class="['log-' + log.type, { 'bg-blue-50 border-l-4 border-blue-500 pl-1': index === currentStep - 1 }]" 
+                         class="log-entry cursor-pointer"
+                         @click="jumpTo(index + 1)">
+                        <div class="flex">
+                            <span class="w-8 text-gray-400 text-right mr-2 select-none">{{ index + 1 }}</span>
+                            <span v-html="log.msg"></span>
+                        </div>
+                    </div>
+                    <div ref="logEnd"></div>
+                </div>
+            </div>
+
+            <!-- Center: Visualizations -->
+            <div class="flex-1 relative bg-gray-100 flex flex-col overflow-hidden">
+                <!-- Tab Navigation -->
+                <div class="bg-white border-b flex px-4 gap-6 shrink-0">
+                    <button v-if="enableImplicationGraph" @click="switchTab('implication')" class="py-3 px-2 text-sm font-medium transition-colors" :class="activeTab === 'implication' ? 'tab-active' : 'tab-inactive'">
+                        Implication Graph
+                    </button>
+                    <button @click="switchTab('searchTree')" class="py-3 px-2 text-sm font-medium transition-colors" :class="activeTab === 'searchTree' ? 'tab-active' : 'tab-inactive'">
+                        Search Tree
+                    </button>
+                    <button @click="switchTab('conflict')" class="py-3 px-2 text-sm font-medium transition-colors" :class="activeTab === 'conflict' ? 'tab-active' : 'tab-inactive'">
+                        Conflict Analysis
+                    </button>
+                </div>
+
+                <!-- Info Overlay -->
+                <div class="absolute top-14 left-4 z-10 flex gap-2 pointer-events-none">
+                    <div class="bg-white/90 backdrop-blur px-3 py-1.5 rounded shadow text-xs border border-gray-200">
+                        <span class="font-bold">Current DL:</span> {{ currentDL }}
+                    </div>
+                    <div v-if="activeTab === 'implication'" class="bg-white/90 backdrop-blur px-3 py-1.5 rounded shadow text-xs border border-gray-200">
+                        <span class="inline-block w-2 h-2 rounded-full bg-blue-500 mr-1"></span> Decision
+                        <span class="inline-block w-2 h-2 rounded-full bg-green-500 ml-2"></span> <span class="inline-block w-2 h-2 rounded-full bg-purple-500 mr-1"></span>Propagated
+                        <span class="inline-block w-2 h-2 rounded-full bg-red-500 mr-1 ml-2"></span> Conflict
+                    </div>
+                    <div v-if="activeTab === 'searchTree'" class="bg-white/90 backdrop-blur px-3 py-1.5 rounded shadow text-xs border border-gray-200">
+                        Tree Nodes = Decisions. 
+                        <br>Levels = Decision Levels.
+                        <br>Edge labels: <b>P</b>=Propagation, <b>U</b>=US Check.
+                    </div>
+                    <div v-if="activeTab === 'conflict'" class="bg-white/90 backdrop-blur px-3 py-1.5 rounded shadow text-xs border border-gray-200">
+                        <span class="inline-block w-2 h-2 bg-red-100 border border-red-500 mr-1"></span> Current Nogood (Delta)
+                        <span class="inline-block w-2 h-2 bg-red-100 border border-yellow-500 mr-1 ml-2"></span> Sigma (To Resolve)
+                        <span class="inline-block w-2 h-2 bg-blue-100 border border-blue-500 mr-1 ml-2"></span> Antecedent (Reason)
+                    </div>
+                </div>
+
+                <!-- Container for Networks -->
+                <div class="flex-1 relative w-full h-full">
+                    <!-- Implication Graph -->
+                    <div id="implication-network" class="vis-network" v-show="activeTab === 'implication'"></div>
+                    <!-- Search Tree -->
+                    <div id="tree-network" class="vis-network" v-show="activeTab === 'searchTree'"></div>
+                    <!-- Conflict Analysis -->
+                    <div id="conflict-network" class="vis-network" v-show="activeTab === 'conflict'"></div>
+                </div>
+            </div>
+
+            <!-- Right: Assignments Table -->
+            <div class="w-64 bg-white border-l shadow-lg flex flex-col text-xs shrink-0">
+                <div class="p-3 border-b bg-gray-50 font-bold text-gray-700 flex justify-between items-center">
+                    Assignments
+                    <span class="bg-gray-200 text-gray-600 px-2 py-0.5 rounded-full">{{ sortedAssignments.length }}</span>
+                </div>
+                <div class="flex-1 overflow-y-auto">
+                    <table class="w-full">
+                        <thead class="bg-gray-50 text-gray-500 sticky top-0">
+                            <tr>
+                                <th class="p-2 text-left font-medium">Atom</th>
+                                <th class="p-2 text-center font-medium">Val</th>
+                                <th class="p-2 text-center font-medium">DL</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="a in sortedAssignments" :key="a.id" class="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                                <td class="p-2 font-mono truncate max-w-[120px]" :title="a.name">{{ truncate(a.name) }}</td>
+                                <td class="p-2 text-center">
+                                    <span :class="a.is_positive ? 'text-green-600 bg-green-50' : 'text-red-600 bg-red-50'" class="px-1.5 py-0.5 rounded font-bold">
+                                        {{ a.is_positive ? 'T' : 'F' }}
+                                    </span>
+                                </td>
+                                <td class="p-2 text-center text-gray-500">{{ a.dl }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp, ref, computed, nextTick } = Vue;
+
+        createApp({
+            setup() {
+                const jsonInput = ref('');
+                const traceLoaded = ref(false);
+                const error = ref('');
+                const rawData = ref(null);
+                const events = ref([]);
+                const symbols = ref({});
+                const stats = ref({});
+                
+                const activeTab = ref('implication');
+                const currentStep = ref(0);
+                const assignments = ref({}); // atom_id -> { val, dl, ... }
+                const enableImplicationGraph = ref(true);
+                
+                // Vis.js Data & Networks
+                const implData = { nodes: new vis.DataSet(), edges: new vis.DataSet() };
+                let implNodeCounter = 0;  // Track node addition order for x-positioning
+                const treeData = { nodes: new vis.DataSet(), edges: new vis.DataSet() };
+                const confData = { nodes: new vis.DataSet(), edges: new vis.DataSet() };
+                
+                let implNetwork = null;
+                let treeNetwork = null;
+                let confNetwork = null;
+                
+                // Search Tree State Tracking
+                let treeDecisionPath = {}; // Level -> NodeId
+                let treeCurrentCounts = { props: 0, us: 0 };
+                let treeLastDecisionId = null;
+                let treeLastConflictId = null;
+                
+                const logs = ref([]);
+                const logEnd = ref(null);
+                const logContainer = ref(null);
+                const totalSteps = ref(0);
+                const currentDL = ref(0);
+
+                const progressPercent = computed(() => totalSteps.value ? (currentStep.value / totalSteps.value) * 100 : 0);
+                const sortedAssignments = computed(() => {
+                    return Object.values(assignments.value).sort((a,b) => a.dl - b.dl || a.id - b.id);
+                });
+
+                function truncate(str) {
+                    if(!str) return "";
+                    const clean = str.startsWith("{") ? "Body " + str : str;
+                    return clean.length > 18 ? clean.substring(0, 16) + "..." : clean;
+                }
+
+                function getSymbol(id) {
+                    return symbols.value[id] || `Atom ${id}`;
+                }
+
+                // Convert body literal IDs to atom names: {-1, 2} -> {not a, b}
+                function formatBodyLiterals(bodyStr) {
+                    if (!bodyStr.startsWith("{") || !bodyStr.endsWith("}")) return bodyStr;
+                    
+                    // Extract content between braces
+                    const content = bodyStr.slice(1, -1);
+                    const literalIds = content.split(',').map(s => s.trim());
+                    
+                    const formattedLiterals = literalIds.map(litStr => {
+                        const litId = parseInt(litStr);
+                        if (isNaN(litId)) return litStr; // Keep as-is if not a number
+                        
+                        const atomId = Math.abs(litId);
+                        const atomName = symbols.value[atomId] || `${atomId}`;
+                        
+                        // If negative, add "not " prefix
+                        return litId < 0 ? `not ${atomName}` : atomName;
+                    });
+                    
+                    return `{${formattedLiterals.join(', ')}}`;
+                }
+
+                function getLiteralName(lit_id) {
+                    const abs_id = Math.abs(lit_id);
+                    const name = getSymbol(abs_id);
+                    const is_pos = lit_id > 0;
+                    if (name.startsWith("{")) {
+                        const formattedBody = formatBodyLiterals(name);
+                        return is_pos ? `T ${formattedBody}` : `F ${formattedBody}`;
+                    }
+                    return is_pos ? `T ${name}` : `F ${name}`;
+                }
+
+                function loadTrace() {
+                    try {
+                        const data = JSON.parse(jsonInput.value);
+                        if (!data.events || !data.symbols) throw new Error("Invalid JSON format");
+                        rawData.value = data;
+                        events.value = data.events;
+                        symbols.value = data.symbols;
+                        stats.value = data.stats || {};
+                        totalSteps.value = data.events.length;
+                        logs.value = events.value.map(e => formatLog(e));
+                        traceLoaded.value = true;
+                        
+                        // If Implication Graph is disabled, default to Search Tree tab
+                        if (!enableImplicationGraph.value) {
+                            activeTab.value = 'searchTree';
+                        }
+                        
+                        nextTick(() => {
+                            initNetworks();
+                            jumpTo(1);
+                        });
+                    } catch (e) {
+                        error.value = e.message;
+                    }
+                }
+
+                function formatLog(e) {
+                    const d = e.details;
+                    switch(e.type) {
+                        case 'decide': return { type: e.type, msg: `DECISION: <b>${getLiteralName(d.literal)}</b> (Level ${d.level})` };
+                        case 'propagate': return { type: e.type, msg: `Infer: <b>${getLiteralName(d.literal)}</b>` };
+                        case 'conflict': 
+                            const c_ng = d.nogood.map(l => getLiteralName(l)).join(", ");
+                            return { type: e.type, msg: `CONFLICT: { ${c_ng} }` };
+                        case 'backjump': return { type: e.type, msg: `BACKJUMP to Level ${d.target_level}` };
+                        case 'loop_nogood': 
+                            const l_ng = d.nogood.map(l => getLiteralName(l)).join(", ");
+                            return { type: e.type, msg: `LOOP NOGOOD: { ${l_ng} }` };
+                        case 'us_check_start': return { type: 'us_detail', msg: `[US Check] Start` };
+                        case 'us_scope': return { type: 'us_detail', msg: `[US Scope] S={${d.scope.join(',')}}` };
+                        case 'us_iterate': return { type: 'us_detail', msg: `[US Iter] U={${d.U.join(',')}} EB={${d.EB.join(',')}}` };
+                        case 'us_source_update': return { type: 'us_detail', msg: `[US Source] Atom ${d.atom} -> Body ${d.new_source}` };
+                        case 'us_found': 
+                            const us = d.unfounded_set.map(id => getSymbol(id)).join(", ");
+                            return { type: 'loop_nogood', msg: `UNFOUNDED SET: { ${us} }` };
+                        case 'no_us' : return { type: 'us_detail', msg: `[US Check] No Unfounded Set Found` };
+                        case 'analyze_start': return { type: 'analyze', msg: `[ANALYZE] Start Conflict Analysis` };
+                        case 'resolution': return { type: 'analyze', msg: `[RESOLVE] Sigma: <b>${getLiteralName(d.sigma)}</b>` };
+                        case 'learned': return { type: e.type, msg: `LEARNED: Level ${d.backjump_level}` };
+                        default: return { type: 'info', msg: e.type.toUpperCase() };
+                    }
+                }
+
+                function initNetworks() {
+                    // Implication Graph
+                    const implContainer = document.getElementById('implication-network');
+                    const implOptions = {
+                        layout: {
+                            hierarchical: {
+                                enabled: false  // Manual positioning for left-to-right order
+                            }
+                        },
+                        nodes: { shape: 'box', font: { multi: 'html', size: 14 } },
+                        edges: { 
+                            arrows: 'to',
+                            color: '#94a3b8', 
+                            smooth: { 
+                                enabled: true, 
+                                // type: 'dynamic', 
+                                type: 'curvedCW',
+                                roundness: 0.3
+                            } 
+                        },
+                        physics: { 
+                            enabled: false,
+                            stabilization: false  // 初期配置の計算もスキップ
+                        }
+                    };
+                    implNetwork = new vis.Network(implContainer, implData, implOptions);
+
+                    // Search Tree
+                    const treeContainer = document.getElementById('tree-network');
+                    const treeOptions = {
+                        layout: {
+                            hierarchical: {
+                                enabled: true,
+                                direction: 'UD', // Same DL = Same Height
+                                sortMethod: 'directed',
+                                levelSeparation: 200,
+                                nodeSpacing: 200
+                            }
+                        },
+                        nodes: { shape: 'box', font: { size: 12 }, margin: 8 },
+                        edges: {
+                            arrows: 'to', 
+                            font: { 
+                                align: 'middle', 
+                                size: 10, 
+                                background: 'white' 
+                            },
+                            smooth: { 
+                                enabled: true, 
+                                type: 'curvedCCW',
+                                roundness: 0.2
+                            }
+                        },
+                        physics: { 
+                            enabled: false 
+                        }
+                    };
+                    treeNetwork = new vis.Network(treeContainer, treeData, treeOptions);
+                    confNetwork = new vis.Network(document.getElementById('conflict-network'), confData, {
+                        layout: { hierarchical: { enabled: false } },
+                        // layout: { hierarchical: { enabled: true, direction: 'UD', sortMethod: 'directed', levelSeparation: 180, nodeSpacing: 180 } },
+                        nodes: { shape: 'box', font: { multi: 'html', size: 16 }, margin: 12 },
+                        edges: { arrows: 'to', color: '#64748b', width: 2 },
+                        physics: { enabled: false, stabilization: false }
+                    });
+                }
+
+                function switchTab(tab) {
+                    activeTab.value = tab;
+                    // Vis.js needs redraw when container becomes visible
+                    nextTick(() => {
+                        if(tab === 'implication' && implNetwork) implNetwork.fit();
+                        if(tab === 'searchTree' && treeNetwork) treeNetwork.fit();
+                        if(tab === 'conflict' && confNetwork) confNetwork.fit();
+                    });
+                }
+
+                function processEvent(event) {
+                    const stepIndex = currentStep.value + 1;
+                    const d = event.details;
+
+                    // --- IMPLICATION GRAPH LOGIC ---
+                    if (event.type === 'decide' || event.type === 'propagate') {
+                        const lit = d.literal;
+                        const atom = Math.abs(lit);
+                        const name = getSymbol(atom);
+                        const lit_name = getLiteralName(lit);
+                        const is_pos = lit > 0;
+                        const is_body = name.startsWith("{");
+                        
+                        
+                        // Always update assignments table
+                        assignments.value[atom] = {
+                            id: atom, name: lit_name, is_positive: is_pos, dl: d.level,
+                            type: event.type, 
+                            antecedent: d.antecedent // Array of literal IDs
+                        };
+
+                        // Only update Implication Graph if enabled
+                        if (enableImplicationGraph.value) {
+                            let color = event.type === 'decide' ? { background: '#eff6ff', border: '#3b82f6' } : { background: '#f0fdf4', border: '#22c55e' };
+                            if(is_body) { color.background = '#faf5ff'; color.border = '#a855f7'; }
+                            // const labelStr = `<b>${is_pos?'T ':'F '}${truncate(name)}</b>`;
+                            const labelStr = `<b>${atom}:${lit_name}</b>`;
+
+                            if(!implData.nodes.get(atom)) {
+                                implNodeCounter++;
+                                implData.nodes.add({ 
+                                    id: atom, 
+                                    label: labelStr, 
+                                    color: color, 
+                                    x: implNodeCounter * 200,  // Position nodes left-to-right based on addition order
+                                    y: d.level * 150,           // Y position based on decision level
+                                    fixed: { x: false, y: false }  // Fix x position, allow y to be adjusted
+                                });
+                            } else {
+                                implData.nodes.update({ id: atom, label: labelStr, color: color });
+                            }
+
+                            if (d.antecedent && d.antecedent.length > 0) {
+                                d.antecedent.forEach(ant_lit => {
+                                    const ant_atom = Math.abs(ant_lit);
+                                    if(ant_atom !== atom && implData.nodes.get(ant_atom)) {
+                                        const edgeId = `${ant_atom}-${atom}`;
+                                        if (!implData.edges.get(edgeId)) {
+                                            // console.log("Adding edge:", edgeId);
+                                            implData.edges.add({ id: edgeId, from: ant_atom, to: atom, label: edgeId }); 
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    } else if (enableImplicationGraph.value && event.type === 'conflict') {
+                        d.nogood.forEach(l => {
+                            const a = Math.abs(l);
+                            if(implData.nodes.get(a)) implData.nodes.update({ id: a, color: { background: '#fef2f2', border: '#ef4444' }, borderWidth: 3 });
+                        });
+                    } else if (event.type === 'backjump') {
+                        const target = d.target_level;
+                        currentDL.value = target;
+                        
+                        // Always update assignments
+                        const toRemove = [];
+                        for(let k in assignments.value) {
+                            if(assignments.value[k].dl > target) toRemove.push(k);
+                        }
+                        toRemove.forEach(k => {
+                            delete assignments.value[k];
+                            if (enableImplicationGraph.value) {
+                                const atomId = parseInt(k);
+                                // Remove edges connected to this node
+                                const edgesToRemove = implData.edges.get({
+                                    filter: (edge) => edge.from === atomId || edge.to === atomId
+                                });
+                                edgesToRemove.forEach(edge => {
+                                    implData.edges.remove(edge.id);
+                                });
+                                // Remove the node
+                                implData.nodes.remove(atomId);
+                            }
+                        });
+                        
+                        // Only update Implication Graph if enabled
+                        if (enableImplicationGraph.value) {
+                            // Reset conflict highlights
+                            Object.keys(assignments.value).forEach(k => {
+                                const a = parseInt(k);
+                                const aData = assignments.value[k];
+                                let color = aData.type === 'decide' ? { background: '#eff6ff', border: '#3b82f6' } : { background: '#f0fdf4', border: '#22c55e' };
+                                if(aData.name.startsWith("{")) { color.background = '#faf5ff'; color.border = '#a855f7'; }
+                                implData.nodes.update({ id: a, color: color, borderWidth: 1 });
+                            });
+                        }
+                    }
+
+                    // --- SEARCH TREE LOGIC ---
+                    if (event.type === 'decide') {
+                        // Update current decision level
+                        currentDL.value = d.level;
+                        
+                        // New Decision Node
+                        const nodeId = `step_${stepIndex}`;
+                        // console.log("Adding decision node:", nodeId, d);
+                        const level = d.level;
+                        const lit = d.literal;
+                        const name = getLiteralName(lit);
+                        const label = `DL${level}\n${truncate(name.replace(/<[^>]*>/g, ''))}`; // Strip HTML for Vis
+                        
+                        // 1. Add Node
+                        treeData.nodes.add({
+                            id: nodeId,
+                            label: label,
+                            level: level, // Ensure hierarchical layout by DL
+                            color: { background: '#eff6ff', border: '#3b82f6' }
+                        });
+
+                        // 2. Add Edge from Parent (previous decision node)
+                        const parentNodeId = treeDecisionPath[level - 1] || 'root';
+                        
+                        // Construct Label: "P: 5, U: 1"
+                        let edgeLabel = `P:${treeCurrentCounts.props}\nU:${treeCurrentCounts.us}`;
+                        
+                        treeData.edges.add({
+                            from: parentNodeId,
+                            to: nodeId,
+                            label: edgeLabel,
+                            color: { color: '#64748b' }
+                        });
+
+                        // 3. Update State
+                        treeDecisionPath[level] = nodeId;
+                        treeLastDecisionId = nodeId;
+                        treeCurrentCounts = { props: 0, us: 0 }; // Reset for next segment
+
+                    } else if (event.type === 'backjump') {
+                        // Backjump to target level
+                        const target = d.target_level;
+                        treeData.edges.add({
+                            from: treeLastConflictId,
+                            to: treeDecisionPath[target] || 'root',
+                            label: `Backjump to DL${target}`,
+                            color: { color: '#f59e0b' },
+                        })
+                        treeLastDecisionId = treeDecisionPath[target] || 'root';
+
+                    } else if (event.type === 'propagate') {
+                        treeCurrentCounts.props++;
+                    } else if (event.type === 'us_check_start') {
+                        treeCurrentCounts.us++;
+                    } else if (event.type === 'conflict') {
+                        const confNodeId = `conf_${stepIndex}`;
+                        treeLastConflictId = confNodeId;
+                        
+                        let edgeLabel = `P:${treeCurrentCounts.props}\nU:${treeCurrentCounts.us}`;
+                        
+                        treeData.nodes.add({
+                            id: confNodeId,
+                            label: "Conflict",
+                            level: currentDL.value + 0.5,
+                            shape: 'diamond',
+                            color: { background: '#fee2e2', border: '#ef4444' },
+                            size: 10
+                        });
+                        
+                        treeData.edges.add({
+                            from: treeLastDecisionId,
+                            to: confNodeId,
+                            label: edgeLabel,
+                            color: '#ef4444',
+                            dashes: true
+                        });
+                        
+                        treeCurrentCounts = { props: 0, us: 0 }; // Reset
+                    } else if (event.type === 'result') {
+                        const sat = d.status === 'SATISFIABLE';
+                        const resultNodeId = `result_${stepIndex}`;
+                        const resLabel = sat ? 'Sat' : 'Unsat';
+                        const resColor = sat ? { background: '#d1fae5', border: '#10b981' } : { background: '#fee2e2', border: '#ef4444' };
+                        let edgeLabel = sat ? `P:${treeCurrentCounts.props}\nU:${treeCurrentCounts.us}` : '';
+
+                        treeData.nodes.add({
+                            id: resultNodeId,
+                            label: resLabel,
+                            level: currentDL.value + 0.8,
+                            shape: 'diamond',
+                            color: resColor,
+                            size: 8
+                        });
+                        treeData.edges.add({
+                            from: sat ? treeLastDecisionId : treeLastConflictId,
+                            to: resultNodeId,
+                            label: edgeLabel,
+                            color: '#64748b',
+                        });
+                        // No further processing after result
+                    }
+
+                    // --- CONFLICT ANALYSIS VISUALIZATION ---
+                    if (event.type === 'resolution') {
+                        // Clear previous step visualization to show strict state update
+                        confData.nodes.clear();
+                        confData.edges.clear();
+
+                        const sigmaLit = d.sigma;
+                        const sigmaAtom = Math.abs(sigmaLit);
+                        const delta = d.current_delta; // List of literal IDs in current Nogood
+                        
+                        // Draw Current Delta (The Conflict Nogood being resolved)
+                        delta.forEach((lit, index) => {
+                            const atom = Math.abs(lit);
+                            const isSigma = (atom === sigmaAtom);
+                            const assign = assignments.value[atom] || { name: `?${atom}`, dl: 0 };
+                            
+                            confData.nodes.add({
+                                id: `d_${atom}`,
+                                label: `<b>${getLiteralName(lit)}</b>\n<b>DL:${assign.dl}</b>`,
+                                // level: assign.dl, // Y-axis by DL
+                                x: index * 200,
+                                y: assign.dl * 100,                                
+                                color: isSigma 
+                                    ? { background: '#fee2e2', border: '#eab308', highlight: { background:'#fef9c3', border:'#eab308'} } // Yellow for Sigma
+                                    : { background: '#fee2e2', border: '#ef4444' }, // Red for others
+                                borderWidth: 1,
+                                shape: 'box'
+                            });
+                        });
+
+                        // Draw Antecedent (Reason for Sigma)
+                        const sigmaAssign = assignments.value[sigmaAtom];
+                        if (sigmaAssign && sigmaAssign.antecedent) {
+                            
+                            sigmaAssign.antecedent.forEach(antLit => {
+                                const antAtom = Math.abs(antLit);
+
+                                const isResolventPivot = (antLit === -sigmaLit);
+                                
+                                const assign = assignments.value[antAtom] || { name: `?${antAtom}`, dl: 0 };
+                                
+                                if(antAtom !== sigmaAtom) { // Skip self-loop
+                                    confData.nodes.add({
+                                        id: `a_${antAtom}`,
+                                        label: `<b>${getLiteralName(antLit)}</b>\n<b>DL:${assign.dl}</b>`,
+                                        // level: assign.dl + 0.5, // Slightly offset or same level
+                                        x: (delta.indexOf(sigmaLit) + 1 + Math.random()) * 200, // Spread out
+                                        y: assign.dl * 100 + 40,
+                                        color: isResolventPivot 
+                                            ? { background: '#bfdbfe', border: '#3b82f6', opacity: 0.5 } // Fading pivot
+                                            : { background: '#dbeafe', border: '#3b82f6' }, // Blue for reason parts
+                                        shape: isResolventPivot ? 'box' : 'box',
+                                        font: { color: isResolventPivot ? '#666' : 'black' }
+                                    });
+
+                                    // Edge from Antecedent parts to Sigma (Causal link)
+                                    confData.edges.add({
+                                        from: `a_${antAtom}`,
+                                        to: `d_${sigmaAtom}`,
+                                        color: isResolventPivot ? '#eab308' : '#94a3b8',
+                                        dashes: isResolventPivot
+                                    });
+                                }
+                            });
+                        }
+                        
+                        // Switch tab automatically if interesting? No, let user switch.
+                    } else if (event.type === "analyze_start") {
+                        // Clear previous step visualization to show strict state update
+                        confData.nodes.clear();
+                        confData.edges.clear();
+
+                        const delta = d.violated;
+                        const startNodeId = `start_${stepIndex}`;
+
+                        // Initial Conflict Delta 
+                        delta.forEach((lit, index) => {
+                            const atom = Math.abs(lit);
+                            const assign = assignments.value[atom] || { name: `?${atom}`, dl: 0 };
+                            
+                            confData.nodes.add({
+                                id: `d_${atom}`,
+                                label: `<b>${getLiteralName(lit)}</b>\n<b>DL:${assign.dl}</b>`,
+                                // level: assign.dl, // Y-axis by DL
+                                x: index * 200,
+                                y: assign.dl * 100,
+                                color: { background: '#fee2e2', border: '#ef4444' },
+                                borderWidth: 1,
+                                shape: 'box'
+                            });
+                        });
+
+                        confData.nodes.add({
+                            id: startNodeId,
+                            label: `<b>START</b>`,
+                            level: currentDL.value + 1,
+                            shape: 'circle',
+                            color: { background: '#fdf2f8', border: '#ffa500' },
+                            borderWidth: 3,
+                            size: 30,
+                            font: { size: 14, bold: true, color: '#ffa500' }
+                        });
+
+                    } else if (event.type === "learned") {
+                        // Clear previous step visualization to show strict state update
+                        confData.nodes.clear();
+                        confData.edges.clear();
+
+                        const lnogood = d.nogood;
+
+                        // Draw Learned Nogood
+                        lnogood.forEach((lit, index) => {
+                            const atom = Math.abs(lit);
+                            const assign = assignments.value[atom] || { name: `?${atom}`, dl: 0 };
+                            
+                            confData.nodes.add({
+                                id: `l_${atom}`,
+                                label: `<b>${getLiteralName(lit)}</b>\n<b>DL:${assign.dl}</b>`,
+                                // level: assign.dl, // Y-axis by DL
+                                x: index * 200,
+                                y: assign.dl * 100,
+                                color: { background: '#fee2e2', border: '#ef4444' },
+                                borderWidth: 2,
+                                shape: 'box'
+                            });
+                        });
+
+                        // Display "learned" circle in conflict analysis view
+                        const learnedNodeId = `learned_${stepIndex}`;
+                        
+                        confData.nodes.add({
+                            id: learnedNodeId,
+                            label: `<b>LEARNED</b>`,
+                            level: currentDL.value + 1,
+                            shape: 'circle',
+                            color: { background: '#fdf2f8', border: '#db2777' },
+                            borderWidth: 3,
+                            size: 30,
+                            font: { size: 14, bold: true, color: '#db2777' }
+                        });
+
+                    } else if (event.type === "backjump") {
+                        // Clear conflict analysis view on backjump
+                        confData.nodes.clear();
+                        confData.edges.clear();
+                    }
+                }
+
+                function jumpTo(step) {
+                    if (step === currentStep.value) return;
+                    
+                    // Reset
+                    currentDL.value = 0;
+                    assignments.value = {};
+                    implData.nodes.clear(); implData.edges.clear();      
+                    implNodeCounter = 0;  // Reset node counter
+                    treeData.nodes.clear(); treeData.edges.clear();
+                    confData.nodes.clear(); confData.edges.clear();
+                    treeData.nodes.add({ id: 'root', label: 'Start', level: 0, shape: 'circle', color: '#e5e7eb' });
+                    treeDecisionPath = {0: 'root'}; treeLastDecisionId = 'root'; treeCurrentCounts = {props:0, us:0};
+                    treeLastConflictId = null;
+                    currentStep.value = 0;
+
+                    for(let i=0; i<step; i++) {
+                        processEvent(events.value[i]);
+                        currentStep.value++;
+                    };
+
+                    scrollToLog(step - 1);
+                }
+
+                function next() {
+                    if (currentStep.value < totalSteps.value) {
+                        const event = events.value[currentStep.value];
+                        processEvent(event);
+                        currentStep.value++;
+                        scrollToLog(currentStep.value - 1);
+                    }
+                }
+
+                function prev() {
+                    if (currentStep.value > 1) jumpTo(currentStep.value - 1);
+                }
+
+                function jumpPrevKey() {
+                    if (currentStep.value <= 1) return;
+                    const prevIndex = currentStep.value - 1;
+                    
+                    // Backward search for Decision or Conflict
+                    for (let i = currentStep.value-1; i >= 1; i--) {
+                        const type = events.value[i-1].type;
+                        if (['decide', 'conflict', 'backjump', 'analyze_step'].includes(type)) {
+                            jumpTo(i);
+                            return;
+                        }
+                    }
+                    jumpTo(1);
+                }
+
+                function jumpNextKey() {
+                    if (currentStep.value >= totalSteps.value) return;
+                    // Forward search for Decision or Conflict
+                    while (currentStep.value < totalSteps.value) {
+                        const event = events.value[currentStep.value];
+                        const type = event.type;
+
+                        processEvent(event);
+                        currentStep.value++;
+                        if (['decide', 'conflict', 'backjump', 'analyze_step'].includes(type)) {
+                            scrollToLog(currentStep.value);
+                            return;
+                        }
+                    }
+                }
+                
+                function scrollToLog(index) {
+                    if (index < 0) return;
+                    nextTick(() => {
+                        const el = logContainer.value.children[index];
+                        if(el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    });
+                }
+
+                return {
+                    jsonInput, traceLoaded, error, loadTrace, activeTab, switchTab,
+                    currentStep, totalSteps, currentDL, stats, progressPercent,
+                    sortedAssignments, truncate, next, prev, jumpTo, jumpPrevKey, jumpNextKey,
+                    logs, logContainer, logEnd,
+                    enableImplicationGraph
+                };
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>
