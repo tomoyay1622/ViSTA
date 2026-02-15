@@ -1,0 +1,212 @@
+{
+    "symbols": {
+      "2": "b",
+      "1": "a",
+      "3": "c",
+      "5": "d",
+      "4": "e",
+      "6": "{-2}",
+      "7": "{-1}",
+      "8": "{1}",
+      "9": "{-1,2}",
+      "10": "{4}",
+      "11": "{3,2}",
+      "12": "{5,2}",
+      "13": "{5,3}"
+    },
+    "stats": {
+      "initial_nogoods": 33,
+      "learned_nogoods": 0,
+      "total_steps": 2,
+      "conflicts": 0,
+      "decisions": 1,
+      "status": "SATISFIABLE"
+    },
+    "events": [
+      {
+        "type": "start",
+        "details": {
+          "vars": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13
+          ]
+        }
+      },
+      {
+        "type": "us_check_start",
+        "details": {}
+      },
+      {
+        "type": "decide",
+        "details": {
+          "literal": -1,
+          "level": 1,
+          "antecedent": []
+        }
+      },
+      {
+        "type": "propagate",
+        "details": {
+          "literal": -6,
+          "level": 1,
+          "antecedent": [
+            6,
+            -1
+          ]
+        }
+      },
+      {
+        "type": "propagate",
+        "details": {
+          "literal": 2,
+          "level": 1,
+          "antecedent": [
+            -2,
+            -6
+          ]
+        }
+      },
+      {
+        "type": "propagate",
+        "details": {
+          "literal": 9,
+          "level": 1,
+          "antecedent": [
+            -9,
+            2,
+            -1
+          ]
+        }
+      },
+      {
+        "type": "propagate",
+        "details": {
+          "literal": 7,
+          "level": 1,
+          "antecedent": [
+            2,
+            -7
+          ]
+        }
+      },
+      {
+        "type": "propagate",
+        "details": {
+          "literal": -8,
+          "level": 1,
+          "antecedent": [
+            8,
+            -1
+          ]
+        }
+      },
+      {
+        "type": "propagate",
+        "details": {
+          "literal": 4,
+          "level": 1,
+          "antecedent": [
+            -4,
+            9
+          ]
+        }
+      },
+      {
+        "type": "propagate",
+        "details": {
+          "literal": 10,
+          "level": 1,
+          "antecedent": [
+            -10,
+            4
+          ]
+        }
+      },
+      {
+        "type": "propagate",
+        "details": {
+          "literal": 5,
+          "level": 1,
+          "antecedent": [
+            -5,
+            10
+          ]
+        }
+      },
+      {
+        "type": "propagate",
+        "details": {
+          "literal": 12,
+          "level": 1,
+          "antecedent": [
+            2,
+            5,
+            -12
+          ]
+        }
+      },
+      {
+        "type": "propagate",
+        "details": {
+          "literal": 3,
+          "level": 1,
+          "antecedent": [
+            12,
+            -3
+          ]
+        }
+      },
+      {
+        "type": "propagate",
+        "details": {
+          "literal": 13,
+          "level": 1,
+          "antecedent": [
+            3,
+            -13,
+            5
+          ]
+        }
+      },
+      {
+        "type": "propagate",
+        "details": {
+          "literal": 11,
+          "level": 1,
+          "antecedent": [
+            -11,
+            2,
+            3
+          ]
+        }
+      },
+      {
+        "type": "us_check_start",
+        "details": {}
+      },
+      {
+        "type": "result",
+        "details": {
+          "status": "SATISFIABLE",
+          "model": [
+            "b",
+            "c",
+            "d",
+            "e"
+          ]
+        }
+      }
+    ]
+  }
+  
