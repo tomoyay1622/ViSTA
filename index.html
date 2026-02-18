@@ -319,6 +319,7 @@
                         case 'loop_nogood': 
                             const l_ng = d.nogood.map(l => getLiteralName(l)).join(", ");
                             return { type: e.type, msg: `LOOP NOGOOD: { ${l_ng} }` };
+                        case 'learned': return { type: e.type, msg: `LEARNED: Level ${d.backjump_level}` };
                         case 'us_check_start': return { type: 'us_detail', msg: `[US Check] Start` };
                         case 'us_scope': return { type: 'us_detail', msg: `[US Scope] S={${d.scope.join(',')}}` };
                         case 'us_iterate': return { type: 'us_detail', msg: `[US Iter] U={${d.U.join(',')}} EB={${d.EB.join(',')}}` };
@@ -773,12 +774,11 @@
                     treeDecisionPath = {0: 'root'}; treeLastDecisionId = 'root'; treeCurrentCounts = {props:0, us:0};
                     treeLastConflictId = null;
                     currentStep.value = 0;
-
+                    
                     for(let i=0; i<step; i++) {
                         processEvent(events.value[i]);
                         currentStep.value++;
                     };
-
                     scrollToLog(step - 1);
                 }
 
@@ -819,7 +819,7 @@
 
                         processEvent(event);
                         currentStep.value++;
-                        if (['decide', 'conflict', 'backjump', 'analyze_step'].includes(type)) {
+                        if (['decide', 'conflict', 'backjump'].includes(type)) {
                             scrollToLog(currentStep.value);
                             return;
                         }
