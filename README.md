@@ -1,18 +1,24 @@
 # ViSTA (Visualization of Solving Trace for ASP)
 ASPプログラムの実行トレースと、その可視化を目的としたツール群
 
-## 使い方
+## Getting started
+
+### Requirements
+- python3
+- Web Browser
+
+### How to use
 - グラウンダーgringoを用いて、ASPプログラムをグラウンディングする
 ```
 $ gringo example/test.lp > example/test.aspif
 ```
 
-- aspif_translatorを用いて、重み付きルールや選択ルールを通常ルールへ変換する
+- 変換器converterを用いて、重み付きルールや選択ルールを通常ルールへ変換する
 ```
 $ python3 converter.py example/test.aspif > example/test.con
 ```
 
-- solver-tracerを用いて、プログラムの求解トレース(JSON形式)を得る
+- 解探索solve-tracerを用いて、プログラムの求解トレース(JSON形式)を得る
 ```
 $ python3 cdnl-tracer.py example/test.con > example/test.json
 ```
